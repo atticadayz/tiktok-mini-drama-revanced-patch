@@ -1,0 +1,11 @@
+{
+  "package": "com.zhiliaoapp.musically",
+  "version_name": "46.9.3",
+  "version_code": 2024609030,
+  "sha256": "56dc6309c1d485aaa0f1b04d097d57364371c7241567156a70ce1bf373ee34ed",
+  "target": {
+    "method_anchor": "[minis.interstitial.frequency][decision] currentContext=",
+    "field": "Lcom/ss/android/ugc/aweme/minis/ads/VePlayerEpisodeSwitchInterstitialConfig;->enabled:Z",
+    "replacement": "const/4 <destination-register>, 0x0"
+  }
+}
