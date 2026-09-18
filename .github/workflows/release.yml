@@ -1,0 +1,104 @@
+name: Build and publish patch
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - "patches.json"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    env:
+      GPR_USER: ${{ secrets.GPR_USER || github.actor }}
+      GPR_KEY: ${{ secrets.GPR_KEY || secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Choose release version
+        id: version
+        shell: bash
+        run: |
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build ReVanced patch bundle
+        shell: bash
+        run: |
+          gradle :patches:jar             -PpatchesVersion="${{ steps.version.outputs.version }}"             --stacktrace
+
+      - name: Locate and verify bundle
+        id: bundle
+        shell: bash
+        run: |
+          RVP="patches/build/libs/patches-${{ steps.version.outputs.version }}.rvp"
+          test -f "$RVP"
+          unzip -l "$RVP" | grep -q "classes.dex"
+          unzip -l "$RVP" | grep -q "DisableMiniDramaInterstitialAdsPatch"
+          echo "path=$RVP" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$RVP")" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}"             "${{ steps.bundle.outputs.path }}"             --title "${{ steps.version.outputs.tag }}"             --notes "TikTok 46.9.3 Mini Drama episode-switch interstitial blocker."
+
+      - name: Write Manager patch-source manifest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ASSET: ${{ steps.bundle.outputs.name }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          version = os.environ["VERSION"]
+          tag = os.environ["TAG"]
+          asset = os.environ["ASSET"]
+
+          manifest = {
+              "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "description": "TikTok 46.9.3: Disable Mini Drama episode-switch interstitial ads.",
+              "download_url": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
+              "signature_download_url": None,
+              "version": version,
+          }
+
+          with open("patches.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+          PY
+
+      - name: Publish stable patches.json URL
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add patches.json
+          git commit -m "chore: publish patch source [skip ci]" || exit 0
+          git push
