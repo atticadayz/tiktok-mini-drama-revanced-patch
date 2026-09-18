@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   release:
@@ -23,11 +24,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "17"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -38,14 +39,14 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          VERSION="0.2.${GITHUB_RUN_NUMBER}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Build ReVanced patch bundle
+      - name: Build official ReVanced Android patch bundle
         shell: bash
         run: |
-          gradle :patches:jar             -PpatchesVersion="${{ steps.version.outputs.version }}"             --stacktrace
+          gradle :patches:buildAndroid             -PpatchesVersion="${{ steps.version.outputs.version }}"             --stacktrace
 
       - name: Locate and verify bundle
         id: bundle
@@ -55,6 +56,8 @@ jobs:
           test -f "$RVP"
           unzip -l "$RVP" | grep -q "classes.dex"
           unzip -l "$RVP" | grep -q "DisableMiniDramaInterstitialAdsPatch"
+          unzip -p "$RVP" META-INF/MANIFEST.MF | tee manifest.txt
+          grep -q "Name: TikTok Mini Drama Patches" manifest.txt
           echo "path=$RVP" >> "$GITHUB_OUTPUT"
           echo "name=$(basename "$RVP")" >> "$GITHUB_OUTPUT"
 
@@ -80,9 +83,6 @@ jobs:
           version = os.environ["VERSION"]
           tag = os.environ["TAG"]
           asset = os.environ["ASSET"]
-
-          # ReVanced Manager deserializes created_at as kotlinx.datetime.LocalDateTime,
-          # so this must not include a trailing Z/UTC offset.
           created_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
 
           manifest = {
