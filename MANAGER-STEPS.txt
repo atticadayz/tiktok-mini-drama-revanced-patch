@@ -1,0 +1,14 @@
+AFTER THE GITHUB ACTION SUCCEEDS
+
+1. ReVanced Manager -> Patches.
+2. Tap the pencil/edit control.
+3. Tap + -> Enter URL.
+4. Enter:
+   https://raw.githubusercontent.com/atticadayz/tiktok-mini-drama-revanced-patch/main/patches.json
+5. Go to Apps.
+6. Select the TikTok 46.9.3 APK from storage.
+7. Select:
+   Disable Mini Drama interstitial ads
+8. Patch.
+9. Install the patched APK.
+10. Open a Mini Drama and test several episode transitions.
