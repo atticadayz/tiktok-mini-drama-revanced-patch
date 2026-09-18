@@ -2,10 +2,11 @@ package app.revanced.patches.tiktok.minis
 
 import app.revanced.patcher.firstMethod
 import app.revanced.patcher.extensions.InstructionExtensions.addInstructions
-import app.revanced.patcher.extensions.InstructionExtensions.replaceInstruction
 import app.revanced.patcher.patch.PatchException
 import app.revanced.patcher.patch.bytecodePatch
+import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction
 
 private const val REWARD_REQUEST_START =
     "requestRewardAds, start, adInstanceUniqueId:"
@@ -13,98 +14,111 @@ private const val REWARD_REQUEST_START =
 private const val REWARD_PRELOADED_SHOW =
     "requestRewardAds, calling rewardADManager.show with preloaded cacheKey:"
 
-private const val REWARD_SHOW =
+private const val INTERSTITIAL_PRELOADED_SHOW =
+    "requestInterstitialAds, calling rewardADManager.show with preloaded cacheKey:"
+
+private const val REWARD_EXTRA_PARAMS =
+    "requestRewardAds, extraParamsJson:"
+
+private const val AD_SHOW =
     "LX/13Zc;->show(ZLjava/lang/String;)V"
 
-private const val REWARD_START =
+private const val AD_START =
     "LX/13Zc;->start(ZLjava/util/HashMap;Ljava/util/HashMap;Ljava/util/HashMap;Ljava/util/List;)V"
 
-private const val COMPLETION_SUCCESS =
-    "Lcom/bytedance/sdk/xbridge/registry/core/model/idl/CompletionBlock;->onSuccess(Lcom/bytedance/sdk/xbridge/registry/core/model/idl/XBaseResultModel;Ljava/lang/String;)V"
+private fun exitInstruction(instruction: Any): String {
+    return when (instruction) {
+        is FiveRegisterInstruction -> {
+            val manager = instruction.registerC
+            val completed = instruction.registerD
+            "invoke-interface {v$manager, v$completed}, LX/13Zc;->exit(Z)V"
+        }
+
+        is RegisterRangeInstruction -> {
+            val manager = instruction.startRegister
+            val completed = manager + 1
+            "invoke-interface/range {v$manager .. v$completed}, LX/13Zc;->exit(Z)V"
+        }
+
+        else -> throw PatchException("Unexpected TikTok rewarded-ad instruction format")
+    }
+}
 
 /**
  * TikTok 46.9.3 (com.zhiliaoapp.musically)
  *
- * Mini Drama commonly uses a rewarded-video ad rather than an interstitial.
- * This patch prevents the reward ad manager from starting/showing the video,
- * lets TikTok complete the JS bridge request normally, then emits the same
- * rewardedVideoAdClose event TikTok emits after a completed rewarded video
- * with isEnded=true.
+ * TikTok contains two Mini rewarded-ad request implementations in this build.
+ * The previous test only intercepted one of them.
  *
- * In this exact TikTok build requestRewardAds has 27 registers / 4 incoming
- * parameters, so p0 == v23 (adInstanceUniqueId) and p3 == v26 (Minis context).
+ * This version leaves show()/start() intact and immediately invokes exit(true)
+ * on the same ad-manager instance. TikTok therefore performs its own normal
+ * didExit callback, including rewardedVideoAdClose/isEnded state, instead of
+ * leaving the Mini Drama player waiting for an ad lifecycle that never finishes.
  */
 @Suppress("unused")
 val bypassMiniDramaRewardedAdsPatch = bytecodePatch(
     name = "Bypass Mini Drama rewarded ads",
-    description = "Skips TikTok Minis rewarded-video ads and reports them as completed.",
+    description = "Immediately completes and closes TikTok Minis rewarded-video ads using TikTok's own ad lifecycle.",
 ) {
     compatibleWith("com.zhiliaoapp.musically"("46.9.3"))
 
     apply {
-        val method = firstMethod(REWARD_REQUEST_START, REWARD_PRELOADED_SHOW)
-        val implementation = method.implementation
+        // Newer/static Mini rewarded-ad request path.
+        val rewardMethod = firstMethod(REWARD_REQUEST_START, REWARD_PRELOADED_SHOW)
+        val rewardImplementation = rewardMethod.implementation
             ?: throw PatchException("TikTok reward-ad request method has no implementation")
 
-        val adCalls = implementation.instructions.withIndex()
+        val rewardCalls = rewardImplementation.instructions.withIndex()
             .filter { (_, instruction) ->
-                val reference = (instruction as? ReferenceInstruction)
-                    ?.reference
-                    ?.toString()
-                reference == REWARD_SHOW || reference == REWARD_START
+                when ((instruction as? ReferenceInstruction)?.reference?.toString()) {
+                    AD_SHOW, AD_START -> true
+                    else -> false
+                }
             }
-            .map { it.index }
 
-        if (adCalls.isEmpty()) {
-            throw PatchException("Could not find TikTok Minis rewarded-ad show/start calls")
+        if (rewardCalls.isEmpty()) {
+            throw PatchException("Could not find TikTok rewarded-ad show/start calls")
         }
 
-        // Keep TikTok's normal success/result-model path, but prevent the actual
-        // ad manager from launching a video.
-        adCalls.forEach { index ->
-            method.replaceInstruction(index, "nop")
+        rewardCalls.sortedByDescending { it.index }.forEach { match ->
+            rewardMethod.addInstructions(
+                match.index + 1,
+                exitInstruction(match.value),
+            )
         }
 
-        val successCallbacks = implementation.instructions.withIndex()
+        // Older/combined Mini ad request path. This method contains one
+        // interstitial show followed by the rewarded start/show path, so skip
+        // the first show and auto-close the later rewarded calls.
+        val combinedMethod = firstMethod(
+            REWARD_REQUEST_START,
+            INTERSTITIAL_PRELOADED_SHOW,
+            REWARD_EXTRA_PARAMS,
+        )
+        val combinedImplementation = combinedMethod.implementation
+            ?: throw PatchException("TikTok combined Mini ad request method has no implementation")
+
+        val combinedShowCalls = combinedImplementation.instructions.withIndex()
             .filter { (_, instruction) ->
-                (instruction as? ReferenceInstruction)
-                    ?.reference
-                    ?.toString() == COMPLETION_SUCCESS
+                (instruction as? ReferenceInstruction)?.reference?.toString() == AD_SHOW
             }
-            .map { it.index }
 
-        if (successCallbacks.isEmpty()) {
-            throw PatchException("Could not find TikTok Minis rewarded-ad success callbacks")
+        val combinedStartCalls = combinedImplementation.instructions.withIndex()
+            .filter { (_, instruction) ->
+                (instruction as? ReferenceInstruction)?.reference?.toString() == AD_START
+            }
+
+        val combinedRewardCalls =
+            combinedShowCalls.drop(1) + combinedStartCalls
+
+        if (combinedRewardCalls.isEmpty()) {
+            throw PatchException("Could not find TikTok combined rewarded-ad show/start calls")
         }
 
-        // Insert from the end so earlier instruction indices remain stable.
-        successCallbacks.sortedDescending().forEach { index ->
-            method.addInstructions(
-                index + 1,
-                """
-                    new-instance v0, LX/02y2;
-                    invoke-direct {v0}, LX/02y2;-><init>()V
-
-                    new-instance v1, Lorg/json/JSONObject;
-                    invoke-direct {v1}, Lorg/json/JSONObject;-><init>()V
-                    iput-object v1, v0, LX/02y2;->element:Ljava/lang/Object;
-
-                    const-string v2, "isEnded"
-                    const/4 v3, 0x1
-                    invoke-virtual {v1, v2, v3}, Lorg/json/JSONObject;->put(Ljava/lang/String;Z)Lorg/json/JSONObject;
-
-                    move-object v6, v23
-                    const-string v2, "adId"
-                    invoke-virtual {v1, v2, v6}, Lorg/json/JSONObject;->put(Ljava/lang/String;Ljava/lang/Object;)Lorg/json/JSONObject;
-
-                    const-string v2, "minis.rewardedVideoAdClose"
-                    new-instance v4, Lkotlin/jvm/internal/AwS532S0100000_29_I1;
-                    const/16 v3, 0x507
-                    invoke-direct {v4, v0, v3}, Lkotlin/jvm/internal/AwS532S0100000_29_I1;-><init>(LX/02y2;I)V
-
-                    move-object v5, v26
-                    invoke-static {v5, v2, v1, v4}, LX/13Sh;->LJFF(LX/13Se;Ljava/lang/String;Lorg/json/JSONObject;Lkotlin/jvm/functions/Function0;)V
-                """.trimIndent(),
+        combinedRewardCalls.sortedByDescending { it.index }.forEach { match ->
+            combinedMethod.addInstructions(
+                match.index + 1,
+                exitInstruction(match.value),
             )
         }
     }
