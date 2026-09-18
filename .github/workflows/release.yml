@@ -19,6 +19,8 @@ jobs:
       GPR_USER: ${{ secrets.GPR_USER || github.actor }}
       GPR_KEY: ${{ secrets.GPR_KEY || secrets.GITHUB_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ORG_GRADLE_PROJECT_githubPackagesUsername: ${{ github.actor }}
+      ORG_GRADLE_PROJECT_githubPackagesPassword: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Check out repository
