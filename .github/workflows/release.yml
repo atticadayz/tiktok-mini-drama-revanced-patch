@@ -81,8 +81,12 @@ jobs:
           tag = os.environ["TAG"]
           asset = os.environ["ASSET"]
 
+          # ReVanced Manager deserializes created_at as kotlinx.datetime.LocalDateTime,
+          # so this must not include a trailing Z/UTC offset.
+          created_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
+
           manifest = {
-              "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "created_at": created_at,
               "description": "TikTok 46.9.3: Disable Mini Drama episode-switch interstitial ads.",
               "download_url": f"https://github.com/{repo}/releases/download/{tag}/{asset}",
               "signature_download_url": None,
