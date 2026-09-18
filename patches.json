@@ -1,0 +1,7 @@
+{
+  "created_at": "1970-01-01T00:00:00Z",
+  "description": "Not published yet. Run the Build and publish patch GitHub Action once.",
+  "download_url": "https://example.invalid/not-built.rvp",
+  "signature_download_url": null,
+  "version": "0.0.0-not-built"
+}
