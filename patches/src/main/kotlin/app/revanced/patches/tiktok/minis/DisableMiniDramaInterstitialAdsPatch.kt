@@ -1,5 +1,6 @@
 package app.revanced.patches.tiktok.minis
 
+import app.revanced.patcher.firstMethod
 import app.revanced.patcher.extensions.InstructionExtensions.replaceInstruction
 import app.revanced.patcher.patch.PatchException
 import app.revanced.patcher.patch.bytecodePatch
