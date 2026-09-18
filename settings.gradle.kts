@@ -1,19 +1,11 @@
+rootProject.name = "tiktok-mini-drama-revanced-patch"
+
 pluginManagement {
     repositories {
         gradlePluginPortal()
-        mavenCentral()
         google()
-    }
-}
-
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        mavenCentral()
-        google()
-
         maven {
-            name = "ReVancedGitHubPackages"
+            name = "GitHubPackages"
             url = uri("https://maven.pkg.github.com/revanced/registry")
             credentials {
                 username = providers.gradleProperty("gpr.user").orNull
@@ -27,5 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "tiktok-mini-drama-revanced-patch"
-include("patches")
+plugins {
+    id("app.revanced.patches") version "1.0.0-dev.5"
+}
