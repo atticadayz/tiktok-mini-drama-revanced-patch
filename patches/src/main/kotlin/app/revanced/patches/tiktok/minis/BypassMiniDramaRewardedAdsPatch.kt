@@ -4,49 +4,72 @@ import app.revanced.patcher.firstMethod
 import app.revanced.patcher.extensions.InstructionExtensions.addInstructions
 import app.revanced.patcher.patch.PatchException
 import app.revanced.patcher.patch.bytecodePatch
+import com.android.tools.smali.dexlib2.Opcode
 
 /**
  * TikTok 46.9.3 (com.zhiliaoapp.musically)
  *
- * Previous builds tried to close the ad immediately after request/start/show().
- * That can fire too early because TikTok opens the rewarded-ad UI asynchronously.
+ * v0.2.16 closed the ad from the Mini delegate's onRewardAdShow callback.
+ * That callback is invoked from inside RewardAdContainer.b(), before the
+ * container's own "ad shown" routine has completely returned. Closing from
+ * inside that callback can re-enter the ad lifecycle, which can kick the user
+ * out of the Mini player or hang the app.
  *
- * This version hooks the actual Mini rewarded-ad "onRewardAdShow" callback.
- * By the time this callback runs, TikTok considers the ad visible. We then call
- * the ad manager's own exit(true), allowing TikTok's normal didExit/reward-close
- * lifecycle to fire after the UI is really present.
+ * This version waits until the rewarded-ad container has finished its complete
+ * one-time show routine. Immediately before that routine returns, it calls the
+ * exact same close handler used by the container's X button:
+ *
+ *   RewardAdContainer.HS()
+ *   GmtRewardAdContainer.WS()
+ *
+ * This intentionally follows TikTok's own close-button path instead of calling
+ * the lower-level ad-manager exit() API directly.
  */
 @Suppress("unused")
 val bypassMiniDramaRewardedAdsPatch = bytecodePatch(
     name = "Bypass Mini Drama rewarded ads",
-    description = "Closes TikTok Minis rewarded ads as soon as TikTok reports the ad is actually shown.",
+    description = "Automatically follows TikTok's own rewarded-ad X-button close path after the ad finishes opening.",
 ) {
     compatibleWith("com.zhiliaoapp.musically"("46.9.3"))
 
     apply {
-        val delegateA = firstMethod {
-            definingClass == "LX/13Sm;" &&
-                name == "onRewardAdShow" &&
-                parameterTypes.size == 1
+        val standardContainer = firstMethod {
+            definingClass == "Lcom/ss/android/ugc/aweme/ui/RewardAdContainer;" &&
+                name == "b" &&
+                returnType == "V" &&
+                parameterTypes.isEmpty()
         }
 
-        val delegateB = firstMethod {
-            definingClass == "LX/13Sn;" &&
-                name == "onRewardAdShow" &&
-                parameterTypes.size == 1
+        val gmtContainer = firstMethod {
+            definingClass == "Lcom/ss/android/ugc/aweme/rich/reward/ui/GmtRewardAdContainer;" &&
+                name == "b" &&
+                returnType == "V" &&
+                parameterTypes.isEmpty()
         }
 
-        listOf(delegateA, delegateB).forEach { method ->
-            // p1 is the LX/13Zc rewarded-ad manager. This callback itself calls
-            // getAdID()/getVideoDuration() on p1 in TikTok 46.9.3, confirming
-            // that it is the live ad-manager instance.
-            method.addInstructions(
-                0,
-                """
-                    const/4 v0, 0x1
-                    invoke-interface {p1, v0}, LX/13Zc;->exit(Z)V
-                """.trimIndent(),
-            )
+        fun patchCloseAtEnd(
+            method: app.revanced.com.android.tools.smali.dexlib2.mutable.MutableMethod,
+            closeInstruction: String,
+        ) {
+            val returnIndex = method.implementation!!.instructions
+                .withIndex()
+                .lastOrNull { (_, instruction) -> instruction.opcode == Opcode.RETURN_VOID }
+                ?.index
+                ?: throw PatchException("Could not find rewarded-ad show routine return")
+
+            method.addInstructions(returnIndex, closeInstruction)
         }
+
+        // HS() and WS() are the same methods invoked by the actual close/X
+        // branches in each container's onClick(View) implementation.
+        patchCloseAtEnd(
+            standardContainer,
+            "invoke-virtual {p0}, Lcom/ss/android/ugc/aweme/ui/RewardAdContainer;->HS()V",
+        )
+
+        patchCloseAtEnd(
+            gmtContainer,
+            "invoke-virtual {p0}, Lcom/ss/android/ugc/aweme/rich/reward/ui/GmtRewardAdContainer;->WS()V",
+        )
     }
 }
